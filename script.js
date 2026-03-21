@@ -608,6 +608,7 @@ function renderHome() {
     document.getElementById("homeStatMonth").textContent      = thisMonth.length;
     renderAnnouncements();
     renderPurposeChart("purposeChart", sitins);
+    renderLangChart(sitins);
 }
 
 function renderAnnouncements() {
@@ -652,6 +653,56 @@ function renderPurposeChart(canvasId, sitins) {
         data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: "transparent", borderWidth: 2 }] },
         options: { plugins: { legend: { position: "bottom", labels: { color: "rgba(240,233,255,0.6)", font: { size: 11 }, padding: 12 } } }, cutout: "55%" }
     });
+}
+
+/* Programming Language Chart */
+function renderLangChart(sitins) {
+    const canvas = document.getElementById("langChart");
+    if (!canvas) return;
+
+    const LANGUAGES = ["C Programming", "Java", "C#", "ASP.Net", "PHP", "Database", "Other"];
+    const colors    = ["#f5c842", "#a78bfa", "#4ecba0", "#f87171", "#60a5fa", "#fb923c", "#e879f9"];
+
+    const counts = {};
+    LANGUAGES.forEach(l => counts[l] = 0);
+    sitins.forEach(s => {
+        if (counts[s.purpose] !== undefined) counts[s.purpose]++;
+        else counts["Other"] = (counts["Other"] || 0) + 1;
+    });
+
+    // Filter out zero-count languages
+    const entries = Object.entries(counts).filter(([, v]) => v > 0);
+    const total   = entries.reduce((sum, [, v]) => sum + v, 0);
+    const labels  = entries.map(([k]) => k);
+    const data    = entries.map(([, v]) => v);
+    const bgColors = labels.map(l => colors[LANGUAGES.indexOf(l)] || "#888");
+
+    if (window.langChart_chart) window.langChart_chart.destroy();
+
+    if (!labels.length) {
+        document.getElementById("langLegend").innerHTML =
+            `<p style="color:var(--text-muted);font-size:13px;font-style:italic;">No sit-in data yet.</p>`;
+        return;
+    }
+
+    window.langChart_chart = new Chart(canvas, {
+        type: "pie",
+        data: { labels, datasets: [{ data, backgroundColor: bgColors, borderColor: "rgba(46,38,69,1)", borderWidth: 3 }] },
+        options: {
+            plugins: { legend: { display: false }, tooltip: {
+                callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} (${Math.round(ctx.parsed/total*100)}%)` }
+            }},
+        }
+    });
+
+    // Custom legend
+    document.getElementById("langLegend").innerHTML = entries.map(([label, count], i) => `
+        <div class="lang-legend-item">
+            <div class="lang-legend-dot" style="background:${bgColors[i]}"></div>
+            <span class="lang-legend-name">${label}</span>
+            <span class="lang-legend-count">${count}</span>
+            <span class="lang-legend-pct">${Math.round(count/total*100)}%</span>
+        </div>`).join("");
 }
 
 /* ── STUDENTS ───────────────────────────────────────────────── */
@@ -1043,3 +1094,278 @@ function renderPagination(containerId, currentPage, totalPages, onPageChange) {
 renderHome();
 
 } // end adminProfilePage guard
+
+/* ============================================================
+   STUDENT DASHBOARD  (student_profile.php)
+   Extended logic — correlates with admin features
+   ============================================================ */
+
+if (document.getElementById("studentProfilePage")) {
+
+    const session = getSession();
+    if (!session || session.role !== "student") {
+        alert("Access denied. Please log in.");
+        window.location.href = "index.php";
+    }
+
+    /* ── Navigation ─────────────────────────────────────────── */
+    const studentNavLinks = document.querySelectorAll(".admin-nav-link");
+    const studentSections = document.querySelectorAll(".admin-section");
+
+    studentNavLinks.forEach(link => {
+        link.addEventListener("click", e => {
+            e.preventDefault();
+            const target = link.dataset.section;
+            studentNavLinks.forEach(l => l.classList.remove("active"));
+            studentSections.forEach(s => s.classList.remove("active"));
+            link.classList.add("active");
+            document.getElementById("sec-" + target).classList.add("active");
+            studentSectionInit[target] && studentSectionInit[target]();
+        });
+    });
+
+    const studentSectionInit = {
+        home:        renderStudentHome,
+        profile:     renderStudentProfile,
+        sitin:       renderStudentSitin,
+        reservation: renderStudentReservations,
+        feedback:    renderStudentFeedback,
+    };
+
+    /* ── Logout ──────────────────────────────────────────────── */
+    document.getElementById("logoutBtn").onclick = () => {
+        clearSession();
+        window.location.href = "index.php";
+    };
+
+    /* ── Avatar ──────────────────────────────────────────────── */
+    const initials = (session.firstName[0] + session.lastName[0]).toUpperCase();
+    applyAvatar(session, initials);
+
+    const photoInput = document.getElementById("photoInput");
+    if (photoInput) {
+        photoInput.onchange = function () {
+            const file = photoInput.files[0];
+            if (!file || !file.type.startsWith("image/")) return;
+            if (file.size > 2 * 1024 * 1024) { alert("Image must be under 2MB."); return; }
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const base64 = e.target.result;
+                const users  = getUsers();
+                const idx    = users.findIndex(u => u.idNumber === session.idNumber);
+                if (idx !== -1) { users[idx].photo = base64; saveUsers(users); setSession(users[idx]); }
+                setAvatarPhoto(base64);
+            };
+            reader.readAsDataURL(file);
+        };
+    }
+
+    const removePhotoBtn = document.getElementById("removePhotoBtn");
+    if (removePhotoBtn) {
+        removePhotoBtn.onclick = function () {
+            const users = getUsers();
+            const idx   = users.findIndex(u => u.idNumber === session.idNumber);
+            if (idx !== -1) { delete users[idx].photo; saveUsers(users); setSession(users[idx]); }
+            clearAvatarPhoto(initials);
+        };
+    }
+
+    /* ── HOME ────────────────────────────────────────────────── */
+    function renderStudentHome() {
+        const u = getUsers().find(u => u.idNumber === session.idNumber) || session;
+
+        // Navbar name
+        const navName = document.getElementById("navName");
+        if (navName) navName.textContent = u.firstName + " " + u.lastName;
+
+        // Profile header
+        setTextById("profileFullName", u.firstName + " " + u.lastName);
+        setTextById("profileMeta", u.idNumber + " · " + (u.course || "") + " " + (u.courseLevel || ""));
+
+        // Stats
+        const mySitins = getSitins ? getSitins().filter(s => s.idNumber === u.idNumber) : [];
+        const myRes    = getReservations ? getReservations().filter(r => r.idNumber === u.idNumber) : [];
+        setTextById("statCredits",      u.remainingCredits ?? 30);
+        setTextById("statSessions",     mySitins.length);
+        setTextById("statReservations", myRes.length);
+
+        // Announcements from admin
+        const list  = document.getElementById("studentAnnounceList");
+        const items = getAnnouncements ? getAnnouncements() : [];
+        if (!items.length) {
+            list.innerHTML = `<p style="color:var(--text-muted);font-style:italic;font-size:13px;">No announcements yet.</p>`;
+        } else {
+            list.innerHTML = items.slice().reverse().map(a => `
+                <div class="announce-item">
+                    <div class="announce-meta">CCS Admin | ${a.date}</div>
+                    <div class="announce-text">${a.text}</div>
+                </div>`).join("");
+        }
+    }
+
+    /* ── PROFILE ─────────────────────────────────────────────── */
+    function renderStudentProfile() {
+        const u = getUsers().find(u => u.idNumber === session.idNumber) || session;
+        setValueById("fieldFirstName",  u.firstName  || "");
+        setValueById("fieldLastName",   u.lastName   || "");
+        setValueById("fieldMiddleName", u.middleName || "");
+        setValueById("fieldIdNumber",   u.idNumber   || "");
+        setValueById("fieldCourse",     u.course     || "");
+        setValueById("fieldCourseLevel",u.courseLevel|| "");
+        setValueById("fieldEmail",      u.email      || "");
+        setValueById("fieldAddress",    u.address    || "");
+    }
+
+    document.getElementById("saveProfileBtn").onclick = function () {
+        const users = getUsers();
+        const idx   = users.findIndex(u => u.idNumber === session.idNumber);
+        if (idx === -1) return;
+        users[idx].firstName   = document.getElementById("fieldFirstName").value.trim();
+        users[idx].lastName    = document.getElementById("fieldLastName").value.trim();
+        users[idx].middleName  = document.getElementById("fieldMiddleName").value.trim();
+        users[idx].course      = document.getElementById("fieldCourse").value.trim();
+        users[idx].courseLevel = document.getElementById("fieldCourseLevel").value.trim();
+        users[idx].email       = document.getElementById("fieldEmail").value.trim();
+        users[idx].address     = document.getElementById("fieldAddress").value.trim();
+        saveUsers(users);
+        setSession(users[idx]);
+        showInlineMsg("saveMsg", "Profile saved successfully!", "green");
+        renderStudentHome();
+    };
+
+    /* ── SIT-IN HISTORY ──────────────────────────────────────── */
+    function renderStudentSitin() {
+        const query  = (document.getElementById("sitinHistorySearch")?.value || "").toLowerCase();
+        const all    = getSitins ? getSitins().filter(s => s.idNumber === session.idNumber) : [];
+        const filtered = query ? all.filter(s =>
+            (s.purpose||"").toLowerCase().includes(query) ||
+            (s.lab||"").toLowerCase().includes(query)
+        ) : all;
+
+        filtered.sort((a, b) => (b.date + b.timeIn).localeCompare(a.date + a.timeIn));
+
+        const pillMap = { Active: "pill-green", Completed: "pill-amber", Cancelled: "pill-red" };
+        const tbody = document.getElementById("historyTableBody");
+        tbody.innerHTML = filtered.length ? filtered.map(s => `
+            <tr>
+                <td>${s.date}</td>
+                <td>${s.lab}</td>
+                <td>${s.purpose}</td>
+                <td>${s.timeIn}</td>
+                <td>${s.timeOut || "—"}</td>
+                <td><span class="status-pill ${pillMap[s.status] || 'pill-amber'}">${s.status}</span></td>
+            </tr>`).join("") :
+            `<tr><td colspan="6" class="table-empty" style="text-align:center;padding:24px;">No sit-in records yet.</td></tr>`;
+    }
+
+    document.getElementById("sitinHistorySearch")?.addEventListener("input", renderStudentSitin);
+
+    /* ── RESERVATION ─────────────────────────────────────────── */
+    function renderStudentReservations() {
+        const tbody = document.getElementById("studentReservationBody");
+        const myRes = getReservations ? getReservations().filter(r => r.idNumber === session.idNumber) : [];
+        const pillMap = { Pending: "pill-amber", Approved: "pill-green", Rejected: "pill-red" };
+
+        tbody.innerHTML = myRes.length ? myRes.slice().reverse().map(r => `
+            <tr>
+                <td>${r.date}</td>
+                <td>${r.time}</td>
+                <td>${r.lab}</td>
+                <td>${r.purpose}</td>
+                <td><span class="status-pill ${pillMap[r.status] || 'pill-amber'}">${r.status}</span></td>
+            </tr>`).join("") :
+            `<tr><td colspan="5" class="table-empty" style="text-align:center;padding:24px;">No reservations yet.</td></tr>`;
+
+        // Update home stat
+        setTextById("statReservations", myRes.length);
+    }
+
+    /* Reservation modal */
+    document.getElementById("newReservationBtn").onclick = () => {
+        document.getElementById("resLabInput").value     = "";
+        document.getElementById("resDateInput").value    = new Date().toISOString().slice(0,10);
+        document.getElementById("resTimeInput").value    = "";
+        document.getElementById("resPurposeInput").value = "";
+        document.getElementById("resModalError").textContent = "";
+        document.getElementById("studentReservationModal").classList.add("open");
+    };
+
+    document.getElementById("resModalClose").onclick  = () => document.getElementById("studentReservationModal").classList.remove("open");
+    document.getElementById("resModalCancel").onclick = () => document.getElementById("studentReservationModal").classList.remove("open");
+
+    document.getElementById("resModalSave").onclick = () => {
+        const lab     = document.getElementById("resLabInput").value;
+        const date    = document.getElementById("resDateInput").value;
+        const time    = document.getElementById("resTimeInput").value;
+        const purpose = document.getElementById("resPurposeInput").value;
+        const errEl   = document.getElementById("resModalError");
+
+        if (!lab || !date || !time || !purpose) { errEl.textContent = "All fields are required."; return; }
+
+        const u = getUsers().find(u => u.idNumber === session.idNumber);
+        const items = getReservations();
+        items.push({
+            id: Date.now().toString(36),
+            studentName: session.firstName + " " + session.lastName,
+            idNumber:    session.idNumber,
+            lab, date, time, purpose,
+            status: "Pending"
+        });
+        saveReservations(items);
+        document.getElementById("studentReservationModal").classList.remove("open");
+        renderStudentReservations();
+        alert("Reservation submitted! Waiting for admin approval.");
+    };
+
+    document.getElementById("studentReservationModal").addEventListener("click", e => {
+        if (e.target === document.getElementById("studentReservationModal"))
+            document.getElementById("studentReservationModal").classList.remove("open");
+    });
+
+    /* ── FEEDBACK ────────────────────────────────────────────── */
+    function renderStudentFeedback() {
+        const list  = document.getElementById("myFeedbackList");
+        const items = getFeedbacks().filter(f => f.studentId === session.idNumber);
+        list.innerHTML = items.length ? items.slice().reverse().map(f => `
+            <div class="announce-item">
+                <div class="announce-meta">${f.date}</div>
+                <div class="announce-text">${f.text}</div>
+            </div>`).join("") :
+            `<p style="color:var(--text-muted);font-style:italic;font-size:13px;">You haven't submitted any feedback yet.</p>`;
+    }
+
+    document.getElementById("submitFeedbackBtn").onclick = () => {
+        const text  = document.getElementById("feedbackInput").value.trim();
+        const msgEl = document.getElementById("feedbackMsg");
+        if (!text) { msgEl.style.color = "#f87171"; msgEl.textContent = "Please write something before submitting."; return; }
+
+        const items = getFeedbacks();
+        // Note: getFeedbacks reads from localStorage but we need to save too
+        const all = JSON.parse(localStorage.getItem("ccs_feedback") || "[]");
+        all.push({
+            id:          Date.now().toString(36),
+            studentId:   session.idNumber,
+            studentName: session.firstName + " " + session.lastName,
+            text,
+            date:        new Date().toISOString().slice(0,10)
+        });
+        localStorage.setItem("ccs_feedback", JSON.stringify(all));
+
+        document.getElementById("feedbackInput").value = "";
+        msgEl.style.color = "#4ecba0";
+        msgEl.textContent = "Feedback submitted successfully!";
+        setTimeout(() => { msgEl.textContent = ""; }, 3000);
+        renderStudentFeedback();
+    };
+
+    /* ── Helper: getSitins / getReservations / getAnnouncements ─ */
+    // These are defined in the admin section — guard in case admin JS not loaded
+    function getSitins()        { return JSON.parse(localStorage.getItem("ccs_sitins"))        || []; }
+    function getReservations()  { return JSON.parse(localStorage.getItem("ccs_reservations"))  || []; }
+    function saveReservations(d){ localStorage.setItem("ccs_reservations", JSON.stringify(d)); }
+    function getAnnouncements() { return JSON.parse(localStorage.getItem("ccs_announcements")) || []; }
+    function getFeedbacks()     { return JSON.parse(localStorage.getItem("ccs_feedback"))      || []; }
+
+    /* Init */
+    renderStudentHome();
+}
