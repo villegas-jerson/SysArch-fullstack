@@ -902,29 +902,55 @@ if (document.getElementById("studentProfilePage")) {
 
     const photoInput = document.getElementById("photoInput");
     if (photoInput) {
-        photoInput.onchange = function () {
+        photoInput.onchange = async function () {
             const file = photoInput.files[0];
             if (!file || !file.type.startsWith("image/")) return;
             if (file.size > 2 * 1024 * 1024) { alert("Image must be under 2MB."); return; }
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                const base64 = e.target.result;
-                const users  = getUsers();
-                const idx    = users.findIndex(u => u.idNumber === session.idNumber);
-                if (idx !== -1) { users[idx].photo = base64; saveUsers(users); setSession(users[idx]); }
-                setAvatarPhoto(base64);
-            };
-            reader.readAsDataURL(file);
+
+            const formData = new FormData();
+            formData.append("photo", file);
+
+            try {
+                const res  = await fetch("upload_photo.php", { method: "POST", body: formData });
+                const data = await res.json();
+                if (data.success) {
+                    const circle = document.getElementById("avatarCircle");
+                    const initEl = document.getElementById("avatarInitials");
+                    if (initEl) initEl.remove();
+                    const oldImg = circle.querySelector("img");
+                    if (oldImg) oldImg.remove();
+                    const img = document.createElement("img");
+                    img.src = data.photo;
+                    circle.insertBefore(img, circle.firstChild);
+                } else {
+                    alert(data.message);
+                }
+            } catch (err) {
+                alert("Could not upload photo.");
+            }
         };
     }
 
     const removePhotoBtn = document.getElementById("removePhotoBtn");
     if (removePhotoBtn) {
-        removePhotoBtn.onclick = function () {
-            const users = getUsers();
-            const idx   = users.findIndex(u => u.idNumber === session.idNumber);
-            if (idx !== -1) { delete users[idx].photo; saveUsers(users); setSession(users[idx]); }
-            clearAvatarPhoto(initials);
+        removePhotoBtn.onclick = async function () {
+            try {
+                await fetch("upload_photo.php", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+                    body: JSON.stringify({ action: "removePhoto" })
+                });
+                const circle = document.getElementById("avatarCircle");
+                const oldImg = circle.querySelector("img");
+                if (oldImg) oldImg.remove();
+                const initials = ((session.firstName||"?")[0] + (session.lastName||"?")[0]).toUpperCase();
+                const span = document.createElement("span");
+                span.id = "avatarInitials";
+                span.textContent = initials;
+                circle.insertBefore(span, circle.firstChild);
+            } catch (err) {
+                alert("Could not remove photo.");
+            }
         };
     }
 

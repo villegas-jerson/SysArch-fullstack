@@ -1,3 +1,28 @@
+<?php
+session_start();
+
+// If already logged in, redirect
+if (isset($_SESSION["user"])) {
+    if ($_SESSION["user"]["role"] === "admin") {
+        header("Location: admin_profile.php");
+    } else {
+        header("Location: student_profile.php");
+    }
+    exit;
+}
+
+// Show error messages passed from login.php or register.php
+$loginError    = "";
+$registerError = "";
+$registerSuccess = "";
+
+if (isset($_GET["error"])) {
+    if ($_GET["error"] === "empty")   $loginError = "Please fill in all fields.";
+    if ($_GET["error"] === "invalid") $loginError = "Invalid ID number or password.";
+}
+if (isset($_GET["reg_error"]))   $registerError   = htmlspecialchars($_GET["reg_error"]);
+if (isset($_GET["reg_success"])) $registerSuccess = "Registration successful! Your ID Number is: <strong>" . htmlspecialchars($_GET["reg_success"]) . "</strong>. Please note it down.";
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,70 +58,89 @@
 
         <!-- Login -->
         <div class="login">
-            <div class="loginContainer" id="loginCont">
-                <form class="login-form">
+            <div class="loginContainer" id="loginCont" <?= $loginError ? 'style="display:flex"' : '' ?>>
+                <form class="login-form" method="POST" action="login.php">
                     <h2>Welcome Back</h2>
 
-                    <label for="lidNumber">ID Number</label>
-                    <input type="text" id="lidNumber" placeholder="Enter ID Number">
+                    <?php if ($loginError): ?>
+                        <p class="form-error" style="margin-bottom:12px;"><?= $loginError ?></p>
+                    <?php endif; ?>
 
-                    <label for="lpassword">Password</label>
-                    <input type="password" id="lpassword" placeholder="Enter Password">
+                    <label>ID Number</label>
+                    <input type="text" name="idNumber" placeholder="Enter ID Number">
+
+                    <label>Password</label>
+                    <input type="password" name="password" placeholder="Enter Password">
 
                     <div class="form-options">
                         <a href="#" class="forgot-link">Forgot password?</a>
                     </div>
 
-                    <button type="submit" id="submitLogin">Login</button>
+                    <button type="submit">Login</button>
                 </form>
             </div>
         </div>
 
         <!-- Register -->
         <div class="register">
-            <div class="registerContainer" id="registerCont">
-                <form class="registerForm">
+            <div class="registerContainer" id="registerCont" <?= ($registerError || $registerSuccess) ? 'style="display:flex"' : '' ?>>
+                <form class="registerForm" method="POST" action="register.php">
                     <h2>Register</h2>
 
-                    <label>ID Number</label>
-                    <input type="text" id="ridNumber" placeholder="Enter ID Number">
+                    <?php if ($registerError): ?>
+                        <p class="form-error" style="margin-bottom:12px;"><?= $registerError ?></p>
+                    <?php endif; ?>
+                    <?php if ($registerSuccess): ?>
+                        <p style="color:#4ecba0;font-size:13px;margin-bottom:12px;"><?= $registerSuccess ?></p>
+                    <?php endif; ?>
 
                     <label>Firstname</label>
-                    <input type="text" id="rfirstname" placeholder="Enter Firstname">
+                    <input type="text" name="firstName" placeholder="Enter Firstname">
 
                     <label>Lastname</label>
-                    <input type="text" id="rlastname" placeholder="Enter Lastname">
+                    <input type="text" name="lastName" placeholder="Enter Lastname">
 
                     <label>Middle Name</label>
-                    <input type="text" id="rmiddlename" placeholder="Enter Middlename">
+                    <input type="text" name="middleName" placeholder="Enter Middlename">
 
-                    <label>Course Level</label>
-                    <input type="text" id="rcourselevel" placeholder="Enter Course Level">
+                    <label>Year Level</label>
+                    <select name="yearLevel">
+                        <option value="">Select Year Level</option>
+                        <option value="1st Year">1st Year</option>
+                        <option value="2nd Year">2nd Year</option>
+                        <option value="3rd Year">3rd Year</option>
+                        <option value="4th Year">4th Year</option>
+                    </select>
 
                     <label>Password</label>
-                    <input type="password" id="rpassword" placeholder="Enter Password">
+                    <input type="password" name="password" placeholder="Enter Password">
 
                     <label>Verify Password</label>
-                    <input type="password" id="rverifyPassword" placeholder="Enter Password">
+                    <input type="password" name="verifyPassword" placeholder="Confirm Password">
 
                     <label>Email</label>
-                    <input type="text" id="remail" placeholder="Enter Email">
+                    <input type="email" name="email" placeholder="Enter Email">
 
                     <label>Course</label>
-                    <input type="text" id="rcourse" placeholder="Enter Course">
+                    <select name="course">
+                        <option value="">Select Course</option>
+                        <option value="BSIT">BSIT</option>
+                        <option value="BSCS">BSCS</option>
+                        <option value="BSCRIM">BSCRIM</option>
+                        <option value="BSHM">BSHM</option>
+                        <option value="BSTE">BSTE</option>
+                    </select>
 
                     <label>Address</label>
-                    <input type="text" id="raddress" placeholder="Enter Address">
+                    <input type="text" name="address" placeholder="Enter Address">
 
-                    <button type="submit" id="submitRegister">Register</button>
+                    <button type="submit">Register</button>
                 </form>
             </div>
         </div>
     </div>
 
-    <div class="homeProfile">
-        <div></div>
-    </div>
+    <div class="homeProfile"><div></div></div>
 
     <script src="script.js"></script>
 </body>
