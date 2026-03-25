@@ -33,42 +33,79 @@ if (btnNavLogin && btnNavRegister) {
     };
 
     /* --- Login Logic (PHP API) --- */
+    /* ============================================================
+   LOGIN LOGIC - SCRIPT.JS
+   ============================================================ */
     const loginSubmit = document.getElementById("submitLogin");
 
-    loginSubmit.onclick = async function (e) {
-        e.preventDefault();
+    if (loginSubmit) {
+        loginSubmit.onclick = async function (e) {
+            e.preventDefault();
 
-        const inputId   = document.getElementById("lidNumber").value.trim();
-        const inputPass = document.getElementById("lpassword").value;
+            // 1. Grab values
+            const idField = document.getElementById("lidNumber");
+            const passField = document.getElementById("lpassword");
+            
+            if (!idField || !passField) {
+                console.error("HTML Input IDs do not match script.js");
+                return;
+            }
 
-        if (!inputId || !inputPass) {
-            showError("loginCont", "Please fill in all fields.");
+            const inputId = idField.value.trim();
+            const inputPass = passField.value;
+
+            if (!inputId || !inputPass) {
+                showError("loginCont", "Please fill in all fields.");
+                return;
+            }
+
+            try {
+                // 2. Send request
+                const res = await fetch("login.php", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        idNumber: inputId, 
+                        password: inputPass 
+                    })
+                });
+
+                // 3. Handle response
+                const responseText = await res.text();
+                console.log("Raw Server Response:", responseText); // Check this in F12 if it fails
+                
+                const data = JSON.parse(responseText);
+
+                if (data.success) {
+                    // Redirect based on role
+                    window.location.href = (data.role === "admin") ? "admin_profile.php" : "student_profile.php";
+                } else {
+                    showError("loginCont", data.message || "Login failed.");
+                }
+            } catch (err) {
+                console.error("Fetch Error:", err);
+                showError("loginCont", "Connection error. See console.");
+            }
+        };
+    }
+
+    /* Safe showError function to prevent the 'prepend' crash */
+    function showError(containerId, message) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            alert(message); // Fallback if UI is broken
             return;
         }
 
-        loginSubmit.textContent = "Logging in...";
-        loginSubmit.disabled    = true;
-
-        try {
-            const res  = await fetch("login.php", {
-                method:  "POST",
-                headers: { "Content-Type": "application/json" },
-                body:    JSON.stringify({ idNumber: inputId, password: inputPass })
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                redirectByRole(data.role);
-            } else {
-                showError("loginCont", data.message || "Invalid ID number or password.");
-            }
-        } catch (err) {
-            showError("loginCont", "Could not connect to server. Please try again.");
-        } finally {
-            loginSubmit.textContent = "Login";
-            loginSubmit.disabled    = false;
+        let errEl = document.getElementById(containerId + "_error");
+        if (!errEl) {
+            errEl = document.createElement("p");
+            errEl.id = containerId + "_error";
+            errEl.style.color = "red";
+            container.prepend(errEl);
         }
-    };
+        errEl.textContent = message;
+    }
 
     /* --- Register Logic (PHP API) --- */
     const registerSubmit = document.getElementById("submitRegister");
