@@ -2,11 +2,9 @@
 session_start();
 require_once "db.php";
 
-// Get form values
 $idNumber = trim($_POST["idNumber"] ?? "");
 $password = $_POST["password"] ?? "";
 
-// Validate inputs
 if (empty($idNumber) || empty($password)) {
     header("Location: index.php?error=empty");
     exit;
@@ -28,16 +26,23 @@ if ($admin && ($password === $admin["password"] || password_verify($password, $a
 }
 
 // ================= STUDENT LOGIN =================
+// 1. Fetch the student including the NEW 'Id' column
 $stmt = $pdo->prepare("SELECT * FROM students WHERE IdNumber = ?");
 $stmt->execute([$idNumber]);
 $user = $stmt->fetch();
 
 if ($user && password_verify($password, $user["password"])) {
     $_SESSION["user"] = [
-        "idNumber"  => $user["IdNumber"],
-        "firstName" => $user["firstName"],
-        "lastName"  => $user["lastName"],
-        "role"      => "student"
+        "idNumber"   => $user["IdNumber"],
+        "firstName"  => $user["firstName"],
+        "lastName"   => $user["lastName"],
+        "middleName" => $user["middleName"] ?? "",
+        "yearLevel"  => $user["yearLevel"],
+        "email"      => $user["email"],
+        "course"     => $user["Course"],
+        "address"    => $user["Address"] ?? "",
+        "photo"      => $user["photo"] ?? "",
+        "role"       => "student"
     ];
     header("Location: student_profile.php");
     exit;

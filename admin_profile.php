@@ -15,37 +15,236 @@ if (isset($_GET["logout"])) {
     exit;
 }
 
-// Handle AJAX actions (edit/delete student) — returns JSON and exits
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_SERVER["HTTP_X_REQUESTED_WITH"])) {
+// ============================================================
+// AJAX — GET actions (return JSON)
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] === "GET" && isset($_GET["action"])) {
+    header("Content-Type: application/json");
+    $action = $_GET["action"];
+
+    // ── Get all students ─────────────────────────────────────
+    if ($action === "getStudents") {
+        $stmt = $pdo->query("SELECT IdNumber, firstName, lastName, middleName, yearLevel, Course, email, Address, remainingCredits FROM students ORDER BY lastName ASC");
+        $rows = $stmt->fetchAll();
+        echo json_encode(array_map(fn($s) => [
+            "idNumber"         => $s["IdNumber"],
+            "firstName"        => $s["firstName"],
+            "lastName"         => $s["lastName"],
+            "middleName"       => $s["middleName"] ?? "",
+            "yearLevel"        => $s["yearLevel"],
+            "course"           => $s["Course"],
+            "email"            => $s["email"],
+            "address"          => $s["Address"] ?? "",
+            "remainingCredits" => $s["remainingCredits"] ?? 30,
+        ], $rows));
+        exit;
+    }
+
+    // ── Get single student ───────────────────────────────────
+    if ($action === "getStudent") {
+        $id   = $_GET["id"] ?? "";
+        $stmt = $pdo->prepare("SELECT * FROM students WHERE IdNumber = ?");
+        $stmt->execute([$id]);
+        $s = $stmt->fetch();
+        if (!$s) { echo json_encode(null); exit; }
+        echo json_encode([
+            "idNumber"         => $s["IdNumber"],
+            "firstName"        => $s["firstName"],
+            "lastName"         => $s["lastName"],
+            "middleName"       => $s["middleName"] ?? "",
+            "yearLevel"        => $s["yearLevel"],
+            "course"           => $s["Course"],
+            "email"            => $s["email"],
+            "address"          => $s["Address"] ?? "",
+            "remainingCredits" => $s["remainingCredits"] ?? 30,
+        ]);
+        exit;
+    }
+
+    // ── Get reservations ─────────────────────────────────────
+        if ($action === "getReservations") {
+        header("Content-Type: application/json");
+        
+        // Select everything from your table
+        $stmt = $pdo->query("SELECT * FROM reservations ORDER BY Id DESC");
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (!$rows) {
+            echo json_encode([]);
+            exit;
+        }
+
+        echo json_encode(array_map(fn($r) => [
+            // We use $r["Id"] because that is the exact name in your screenshot
+            "id"           => $r["Id"], 
+            "idNumber"     => $r["IdNumber"],
+            "studentName"  => $r["studentName"],
+            "lab"          => $r["lab"],
+            "date"         => $r["date"],
+            "time"         => $r["time"],
+            "purpose"      => $r["purpose"],
+            "status"       => $r["status"]
+        ], $rows));
+        exit;
+    }
+
+}
+
+// ============================================================
+// AJAX — POST actions (return JSON)
+// ============================================================
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
     header("Content-Type: application/json");
     $data   = json_decode(file_get_contents("php://input"), true);
     $action = $data["action"] ?? "";
 
-    if ($action === "editStudent") {
-        $stmt = $pdo->prepare("
-            UPDATE students SET firstName=?, lastName=?, middleName=?, yearLevel=?, email=?, Course=?
-            WHERE IdNumber=?
-        ");
-        $stmt->execute([
-            $data["firstName"], $data["lastName"], $data["middleName"],
-            $data["yearLevel"], $data["email"], $data["course"], $data["idNumber"]
-        ]);
+    // ── Update reservation status ─────────────────────────────
+    if ($action === "updateReservation") {
+        $stmt = $pdo->prepare("UPDATE reservations SET status=? WHERE id=?");
+        if($stmt->execute([$data["status"], $data["id"]])) {
+            echo json_encode(["success" => true]);
+        } else {
+            echo json_encode(["success" => false, "message" => "Update failed"]);
+        }
+        exit;
+    }
+
+    // ── Add reservation (by admin) ────────────────────────────
+    if ($action === "addReservation") {
+        try {
+            // Verify student exists
+            $stmt = $pdo->prepare("SELECT IdNumber, firstName, lastName FROM students WHERE IdNumber = ?");
+            $stmt->execute([$data["idNumber"]]);
+            $student = $stmt->fetch();
+
+            if (!$student) {
+                echo json_encode(["success" => false, "message" => "Student ID not found."]);
+                exit;
+            }
+
+            $studentName = $student["firstName"] . " " . $student["lastName"];
+
+            // REMOVED $id = uniqid and 'id' from query for AUTO_INCREMENT
+            $query = "INSERT INTO reservations (idNumber, studentName, lab, date, time, purpose, status) 
+                      VALUES (?, ?, ?, ?, ?, ?, 'Approved')";
+            
+            $stmt = $pdo->prepare($query);
+            $stmt->execute([$data["idNumber"], $studentName, $data["lab"], $data["date"], $data["time"], $data["purpose"]]);
+            
+            echo json_encode(["success" => true]);
+        } catch (PDOException $e) {
+            echo json_encode(["success" => false, "message" => "DB Error: " . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ── Start sit-in ─────────────────────────────────────────
+    if ($action === "startSitin") {
+        try {
+            // Check student has remaining credits
+            $stmt = $pdo->prepare("SELECT remainingCredits FROM students WHERE IdNumber = ?");
+            $stmt->execute([$data["idNumber"]]);
+            $student = $stmt->fetch();
+            
+            if (!$student || $student["remainingCredits"] <= 0) {
+                echo json_encode(["success" => false, "message" => "Student has no remaining credits."]);
+                exit;
+            }
+
+            // Check no active sit-in already
+            $stmt = $pdo->prepare("SELECT sitId FROM sitins WHERE idNumber = ? AND status = 'Active'");
+            $stmt->execute([$data["idNumber"]]);
+            if ($stmt->fetch()) {
+                echo json_encode(["success" => false, "message" => "Student already has an active sit-in."]);
+                exit;
+            }
+
+            $sitId = uniqid("SIT-");
+            $stmt  = $pdo->prepare("INSERT INTO sitins (sitId, idNumber, studentName, purpose, lab, date, timeIn, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')");
+            $stmt->execute([$sitId, $data["idNumber"], $data["studentName"], $data["purpose"], $data["lab"], $data["date"], $data["timeIn"]]);
+            
+            echo json_encode(["success" => true, "sitId" => $sitId]);
+        } catch (PDOException $e) {
+            echo json_encode(["success" => false, "message" => "DB Error: " . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ── End sit-in (Time Out) ────────────────────────────────
+    if ($action === "endSitin") {
+        // Get the sit-in to find the student
+        $stmt = $pdo->prepare("SELECT idNumber FROM sitins WHERE sitId = ?");
+        $stmt->execute([$data["sitId"]]);
+        $sitin = $stmt->fetch();
+        if ($sitin) {
+            // Deduct one credit from the student
+            $pdo->prepare("UPDATE students SET remainingCredits = remainingCredits - 1 WHERE IdNumber = ? AND remainingCredits > 0")
+                ->execute([$sitin["idNumber"]]);
+        }
+        $stmt = $pdo->prepare("UPDATE sitins SET status='Completed', timeOut=? WHERE sitId=?");
+        $stmt->execute([$data["timeOut"], $data["sitId"]]);
         echo json_encode(["success" => true]);
         exit;
     }
 
-    if ($action === "deleteStudent") {
-        $stmt = $pdo->prepare("DELETE FROM students WHERE IdNumber=?");
+    // ── Cancel sit-in ────────────────────────────────────────
+    if ($action === "cancelSitin") {
+        $stmt = $pdo->prepare("UPDATE sitins SET status='Cancelled', timeOut=? WHERE sitId=?");
+        $stmt->execute([$data["timeOut"], $data["sitId"]]);
+        echo json_encode(["success" => true]);
+        exit;
+    }
+
+    // ── Add announcement ─────────────────────────────────────
+    if ($action === "addAnnouncement") {
+        $id   = uniqid("ANN-");
+        $stmt = $pdo->prepare("INSERT INTO announcements (id, text, date) VALUES (?, ?, ?)");
+        $stmt->execute([$id, $data["text"], $data["date"]]);
+        echo json_encode(["success" => true, "id" => $id]);
+        exit;
+    }
+
+    // ── Delete announcement ──────────────────────────────────
+    if ($action === "deleteAnnouncement") {
+        $stmt = $pdo->prepare("DELETE FROM announcements WHERE id=?");
+        $stmt->execute([$data["id"]]);
+        echo json_encode(["success" => true]);
+        exit;
+    }
+
+    // ── Update reservation status ─────────────────────────────
+    if ($action === "updateReservation") {
+        $stmt = $pdo->prepare("UPDATE reservations SET status=? WHERE id=?");
+        $stmt->execute([$data["status"], $data["id"]]);
+        echo json_encode(["success" => true]);
+        exit;
+    }
+
+    // ── Add reservation (by admin) ────────────────────────────
+    if ($action === "addReservation") {
+        // Verify student exists
+        $stmt = $pdo->prepare("SELECT IdNumber, firstName, lastName FROM students WHERE IdNumber = ?");
         $stmt->execute([$data["idNumber"]]);
+        $student = $stmt->fetch();
+        if (!$student) {
+            echo json_encode(["success" => false, "message" => "Student not found."]);
+            exit;
+        }
+        $id          = uniqid("RES-");
+        $studentName = $student["firstName"] . " " . $student["lastName"];
+        $stmt        = $pdo->prepare("INSERT INTO reservations (id, idNumber, studentName, lab, date, time, purpose, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')");
+        $stmt->execute([$id, $data["idNumber"], $studentName, $data["lab"], $data["date"], $data["time"], $data["purpose"]]);
         echo json_encode(["success" => true]);
         exit;
     }
 
-    echo json_encode(["success" => false, "message" => "Unknown action"]);
+    echo json_encode(["success" => false, "message" => "Unknown POST action"]);
     exit;
 }
 
-// Fetch all students for the dashboard
+// ============================================================
+// Full page render — fetch students for initial table render
+// ============================================================
 $stmt     = $pdo->query("SELECT * FROM students ORDER BY lastName ASC");
 $students = $stmt->fetchAll();
 ?>
@@ -54,7 +253,6 @@ $students = $stmt->fetchAll();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;">
     <title>Admin Dashboard — CCS Sit-in System</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -149,9 +347,7 @@ $students = $stmt->fetchAll();
                         <tr><td colspan="6" class="table-empty" style="text-align:center;padding:24px;">No students registered yet.</td></tr>
                     <?php else: ?>
                         <?php foreach($students as $s): ?>
-                        <tr class="student-row"
-                            data-id="<?= htmlspecialchars($s['IdNumber']) ?>"
-                            data-name="<?= htmlspecialchars(strtolower($s['firstName'].' '.$s['lastName'])) ?>">
+                        <tr>
                             <td class="td-id"><?= htmlspecialchars($s['IdNumber']) ?></td>
                             <td class="td-name"><?= htmlspecialchars($s['lastName'].', '.$s['firstName'].' '.($s['middleName']??'')) ?></td>
                             <td><?= htmlspecialchars($s['yearLevel']) ?></td>
@@ -178,6 +374,16 @@ $students = $stmt->fetchAll();
                 <h2 class="section-heading">Current Sit-in</h2>
                 <button class="adm-btn adm-btn-primary" id="newSitinBtn">+ New Sit-in</button>
             </div>
+            <div class="adm-table-toolbar">
+                <div class="adm-table-search">
+                    Search: <input type="text" id="sitinSearch" placeholder="Name or ID...">
+                </div>
+                <select id="sitinPerPage" style="margin-left:12px;">
+                    <option value="10">10 / page</option>
+                    <option value="25">25 / page</option>
+                    <option value="50">50 / page</option>
+                </select>
+            </div>
             <table class="adm-table">
                 <thead>
                     <tr>
@@ -189,6 +395,7 @@ $students = $stmt->fetchAll();
                     <tr><td colspan="8" class="table-empty" style="text-align:center;padding:24px;">No active sit-ins.</td></tr>
                 </tbody>
             </table>
+            <div id="sitinPagination" style="display:flex;gap:6px;margin-top:12px;align-items:center;"></div>
         </section>
 
         <!-- ══ RECORDS ══ -->
@@ -196,6 +403,16 @@ $students = $stmt->fetchAll();
             <div class="section-header-row">
                 <h2 class="section-heading">Sit-in Records</h2>
                 <button class="adm-btn adm-btn-secondary" id="exportRecordsBtn">Export CSV</button>
+            </div>
+            <div class="adm-table-toolbar">
+                <div class="adm-table-search">
+                    Search: <input type="text" id="recordsSearch" placeholder="Name, ID or purpose...">
+                </div>
+                <select id="recordsPerPage" style="margin-left:12px;">
+                    <option value="10">10 / page</option>
+                    <option value="25">25 / page</option>
+                    <option value="50">50 / page</option>
+                </select>
             </div>
             <table class="adm-table">
                 <thead>
@@ -208,6 +425,7 @@ $students = $stmt->fetchAll();
                     <tr><td colspan="9" class="table-empty" style="text-align:center;padding:24px;">No records yet.</td></tr>
                 </tbody>
             </table>
+            <div id="recordsPagination" style="display:flex;gap:6px;margin-top:12px;align-items:center;"></div>
         </section>
 
         <!-- ══ REPORTS ══ -->
@@ -360,23 +578,6 @@ $students = $stmt->fetchAll();
             </div>
         </div>
     </div>
-
-    <!-- Pass PHP student data to JS -->
-    <script>
-        const PHP_STUDENTS = <?= json_encode(array_map(function($s) {
-            return [
-                "idNumber"   => $s["IdNumber"],
-                "firstName"  => $s["firstName"],
-                "lastName"   => $s["lastName"],
-                "middleName" => $s["middleName"] ?? "",
-                "yearLevel"  => $s["yearLevel"],
-                "email"      => $s["email"],
-                "course"     => $s["Course"],
-                "address"    => $s["Address"] ?? "",
-                "remainingCredits" => 30
-            ];
-        }, $students)) ?>;
-    </script>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="script.js"></script>
